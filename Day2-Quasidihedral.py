@@ -119,15 +119,15 @@ def stream_decryptor(input_stream, output_stream, key):
         len(key) == 1
     '''
     assert len(key) == 1, "The key must be a length-1 bytes object."
-    inverter = quasidihedral_256_inverse(key)
-    last_plaintext_letter = IDENTITY
+    inverter = IDENTITY
     while True:
         byte = input_stream.read(1)
         if byte:
-            last_plaintext_letter = quasidihedral_256_times(inverter, byte)
+            byte = quasidihedral_256_times(quasidihedral_256_inverse(key), byte)
+            byte = quasidihedral_256_times(inverter, byte)
             inverter = quasidihedral_256_times(inverter,
-                quasidihedral_256_inverse(last_plaintext_letter))
-            output_stream.write(last_plaintext_letter)
+                                               quasidihedral_256_inverse(byte))
+            output_stream.write(byte)
         else:
             break
 
@@ -219,7 +219,11 @@ class TestCryptographicFunctions(TestCase):
             stream_decryptor(ciphertext, final_plaintext, key)
 
             initial_plaintext.seek(0)
+            initial_plaintext_bytes = initial_plaintext.read()
             final_plaintext.seek(0)
+            final_plaintext_bytes = final_plaintext.read()
             ciphertext.seek(0)
-            self.assertEqual(initial_plaintext.read(), final_plaintext.read(),
-                (key, ciphertext.read()))
+            ciphertext_bytes = ciphertext.read()
+            self.assertEqual(initial_plaintext_bytes, final_plaintext_bytes,
+                (key, len(initial_plaintext_bytes), len(final_plaintext_bytes),
+                len(ciphertext_bytes), ciphertext_bytes))
