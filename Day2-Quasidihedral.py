@@ -80,20 +80,24 @@ S = (128).to_bytes(1, 'little', signed=False)
 R = (1).to_bytes(1, 'little', signed=False)
 
 
-def stream_encryptor(input_stream, output_stream):
+def stream_encryptor(input_stream, output_stream, key):
     '''
     Encrypt input_stream to output_stream.
 
     Arguments:
         input_stream (io.BytesIO)
         output_stream (io.BytesIO)
+        key (bytes)
+    Requires:
+        len(key) == 1
 
-    This method sets output_stream[x] equal to the product of the elements in
-    the slice input_stream[0:x+1]. Naturally, input_stream[0] is on the left of
-    the word and output_stream[x] is on the right of the word, with respect to
-    the conventions followed in the rest of this module.
+    This method sets output_stream[x] equal to key times the product of the
+    elements in the slice input_stream[0:x+1]. Naturally, input_stream[0] is on
+    the left of the word and output_stream[x] is on the right of the word, with
+    respect to the conventions followed in the rest of this module.
     '''
-    running_product = IDENTITY
+    assert len(key) == 1, "The key must be a length-1 bytes object."
+    running_product = key
     while True:
         byte = input_stream.read(1)
         if byte:
@@ -103,17 +107,27 @@ def stream_encryptor(input_stream, output_stream):
             break
 
 
-def stream_decryptor(input_stream, output_stream):
+def stream_decryptor(input_stream, output_stream, key):
     '''
-    Decrypt output_stream to input_stream.
+    Decrypt output_stream to input_stream using the key.
+
+    Arguments:
+        input_stream (io.BytesIO)
+        output_stream (io.BytesIO)
+        key (bytes)
+    Requires:
+        len(key) == 1
     '''
-    last_element = IDENTITY
+    assert len(key) == 1, "The key must be a length-1 bytes object."
+    inverter = quasidihedral_256_inverse(key)
+    last_plaintext_letter = IDENTITY
     while True:
         byte = input_stream.read(1)
         if byte:
-            output_stream.write(quasidihedral_256_times(
-                quasidihedral_256_inverse(last_element), byte))
-            last_element = byte
+            last_plaintext_letter = quasidihedral_256_times(inverter, byte)
+            inverter = quasidihedral_256_times(inverter,
+                quasidihedral_256_inverse(last_plaintext_letter))
+            output_stream.write(last_plaintext_letter)
         else:
             break
 
@@ -128,7 +142,7 @@ def get_random_bytes(length):
     )
 
 
-class Tests(TestCase):
+class TestGroupFunctions(TestCase):
     # pylint: disable=missing-function-docstring,missing-class-docstring
 
     def test_identity_law(self):
@@ -145,33 +159,6 @@ class Tests(TestCase):
             inv = quasidihedral_256_inverse(x)
             prod = quasidihedral_256_times(x, inv)
             self.assertEqual(prod, IDENTITY, str(x))
-
-    def test_known_message(self):
-        plaintext_bytes = b'I know how to outpizza the hut'
-        plaintext_stream = BytesIO(plaintext_bytes)
-        ciphertext_stream = BytesIO()
-        stream_encryptor(plaintext_stream, ciphertext_stream)
-        ciphertext_stream.seek(0)
-        decrypted_stream = BytesIO()
-        stream_decryptor(ciphertext_stream, decrypted_stream)
-        decrypted_stream.seek(0)
-        decrypted_bytes = decrypted_stream.read()
-        self.assertEqual(plaintext_bytes, decrypted_bytes)
-
-    def test_fuzz(self):
-        for s in range(20):
-            seed(s)
-            initial_plaintext = BytesIO(get_random_bytes(1000))
-            ciphertext = BytesIO()
-            final_plaintext = BytesIO()
-
-            stream_encryptor(initial_plaintext, ciphertext)
-            ciphertext.seek(0)
-            stream_decryptor(ciphertext, final_plaintext)
-
-            initial_plaintext.seek(0)
-            final_plaintext.seek(0)
-            self.assertEqual(initial_plaintext.read(), final_plaintext.read())
 
     def test_subgroup_of_order_2(self):
         for i1 in range(2):
@@ -199,3 +186,40 @@ class Tests(TestCase):
             ans = quasidihedral_256_times(p, S)
             exp = ((63*i1) % 128).to_bytes(1, 'little', signed=False)
             self.assertEqual(ans, exp, f"{i1}")
+
+
+class TestCryptographicFunctions(TestCase):
+    # pylint: disable=missing-function-docstring,missing-class-docstring
+
+    def test_known_message(self):
+        plaintext_bytes = b'I know how to outpizza the hut'
+        key = b'\x89'
+        plaintext_stream = BytesIO(plaintext_bytes)
+        ciphertext_stream = BytesIO()
+        stream_encryptor(plaintext_stream, ciphertext_stream, key)
+        ciphertext_stream.seek(0)
+        ciphertext_bytes = ciphertext_stream.read()
+        ciphertext_stream.seek(0)
+        decrypted_stream = BytesIO()
+        stream_decryptor(ciphertext_stream, decrypted_stream, key)
+        decrypted_stream.seek(0)
+        decrypted_bytes = decrypted_stream.read()
+        self.assertEqual(plaintext_bytes, decrypted_bytes, ciphertext_bytes)
+
+    def test_fuzz(self):
+        for s in range(200):
+            seed(s)
+            initial_plaintext = BytesIO(get_random_bytes(1000))
+            key = get_random_bytes(1)
+            ciphertext = BytesIO()
+            final_plaintext = BytesIO()
+
+            stream_encryptor(initial_plaintext, ciphertext, key)
+            ciphertext.seek(0)
+            stream_decryptor(ciphertext, final_plaintext, key)
+
+            initial_plaintext.seek(0)
+            final_plaintext.seek(0)
+            ciphertext.seek(0)
+            self.assertEqual(initial_plaintext.read(), final_plaintext.read(),
+                (key, ciphertext.read()))
